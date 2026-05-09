@@ -1,5 +1,4 @@
-"}
-```python
+```python id="9m2x6v"
 import asyncio
 import logging
 from datetime import datetime
@@ -15,21 +14,43 @@ from aiogram.types import (
     InlineKeyboardButton
 )
 
+# =========================
+# CONFIG
+# =========================
+
 TOKEN = "8746156823:AAEXcBv6pjYMC4WfGLndRuQ-FsKYsHJq9HE"
 ADMIN_ID = 8085768728
 
+# =========================
+# LOGGING
+# =========================
+
 logging.basicConfig(level=logging.INFO)
+
+# =========================
+# BOT
+# =========================
 
 bot = Bot(
     token=TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    default=DefaultBotProperties(
+        parse_mode=ParseMode.HTML
+    )
 )
 
 dp = Dispatcher()
 
-# -----------------------------
-# Languages
-# -----------------------------
+# =========================
+# DATABASE
+# =========================
+
+users_lang = {}
+reports_db = []
+banned_users = set()
+
+# =========================
+# LANGUAGES
+# =========================
 
 TEXTS = {
     "en": {
@@ -39,25 +60,24 @@ TEXTS = {
         "report_type": "Choose Content Type",
         "violations": "Choose Violation Type",
         "stats": "Statistics",
+        "queued": "Your request has been added to review queue"
     },
     "ar": {
-        "welcome": "اهلا بك في نظام البلاغات",
+        "welcome": "اهلا بك في نظام المراجعة",
         "choose_lang": "اختر اللغة",
         "menu": "القائمة الرئيسية",
         "report_type": "اختر نوع المحتوى",
-        "violations": "اختر نوع الهجوم",
+        "violations": "اختر نوع المخالفة",
         "stats": "الإحصائيات",
+        "queued": "تم إضافة طلبك للمراجعة"
     }
 }
 
-users_lang = {}
-reports_db = []
+# =========================
+# KEYBOARDS
+# =========================
 
-# -----------------------------
-# Keyboards
-# -----------------------------
-
-def lang_keyboard():
+def language_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -73,9 +93,7 @@ def lang_keyboard():
         ]
     )
 
-def main_menu(lang):
-    text = TEXTS[lang]
-
+def main_menu():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -105,7 +123,7 @@ def main_menu(lang):
         ]
     )
 
-def violation_keyboard():
+def violations_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -151,23 +169,28 @@ def violation_keyboard():
         ]
     )
 
-# -----------------------------
-# Start
-# -----------------------------
+# =========================
+# START
+# =========================
 
 @dp.message(CommandStart())
 async def start(message: Message):
+
+    if message.from_user.id in banned_users:
+        return
+
     await message.answer(
         "Choose Language / اختر اللغة",
-        reply_markup=lang_keyboard()
+        reply_markup=language_keyboard()
     )
 
-# -----------------------------
-# Language
-# -----------------------------
+# =========================
+# LANGUAGE
+# =========================
 
 @dp.callback_query(F.data.startswith("lang_"))
-async def set_lang(callback: CallbackQuery):
+async def set_language(callback: CallbackQuery):
+
     lang = callback.data.split("")[1]
 
     users_lang[callback.from_user.id] = lang
@@ -176,70 +199,97 @@ async def set_lang(callback: CallbackQuery):
 
     await callback.message.edit_text(
         text["welcome"],
-        reply_markup=main_menu(lang)
+        reply_markup=main_menu()
     )
 
-# -----------------------------
-# Content Type
-# -----------------------------
+# =========================
+# CONTENT TYPE
+# =========================
 
 @dp.callback_query(F.data.startswith("type"))
-async def choose_type(callback: CallbackQuery):
-    lang = users_lang.get(callback.from_user.id, "en")
+async def content_type(callback: CallbackQuery):
+
+    if callback.from_user.id in banned_users:
+        return
+
+    lang = users_lang.get(
+        callback.from_user.id,
+        "en"
+    )
 
     text = TEXTS[lang]
 
-    content_type = callback.data.replace("type_", "")
+    selected_type = callback.data.replace(
+        "type_",
+        ""
+    )
 
     reports_db.append({
         "user": callback.from_user.id,
-        "type": content_type,
-        "time": datetime.now().strftime("%H:%M:%S")
+        "type": selected_type,
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
 
     await callback.message.answer(
-        f"{text['violations']}\n\nSelected: {content_type}",
-        reply_markup=violation_keyboard()
+        f"{text['violations']}\n\nSelected: {selected_type}",
+        reply_markup=violations_keyboard()
     )
 
-# -----------------------------
-# Violations
-# -----------------------------
+# =========================
+# VIOLATIONS
+# =========================
 
 @dp.callback_query(F.data.startswith("v_"))
-async def violation(callback: CallbackQuery):
-    violation_type = callback.data.replace("v_", "")
+async def violation_selected(callback: CallbackQuery):
 
-    await callback.message.answer(
-        f"✅ Violation selected:\n\n{violation_type}\n\n"
-        f"Your moderation request has been queued for review."
+    violation = callback.data.replace(
+        "v_",
+        ""
     )
 
-# -----------------------------
-# Statistics
-# -----------------------------
+    lang = users_lang.get(
+        callback.from_user.id,
+        "en"
+    )
+
+    text = TEXTS[lang]
+
+    await callback.message.answer(
+        f"✅ {text['queued']}\n\n"
+        f"Type: {violation}"
+    )
+
+# =========================
+# STATS
+# =========================
 
 @dp.callback_query(F.data == "stats")
-async def stats(callback: CallbackQuery):
-    total = len(reports_db)
+async def statistics(callback: CallbackQuery):
+
+    total_requests = len(reports_db)
+    total_users = len(users_lang)
 
     await callback.message.answer(
         f"""
 📊 Statistics
 
-Total Requests: {total}
-Users: {len(users_lang)}
-System: Online
-Queue: Active
+👤 Users: {total_users}
+
+📄 Requests: {total_requests}
+
+🟢 System: Online
+
+⚡ Queue: Active
         """
     )
 
-# -----------------------------
-# Admin Panel
-# -----------------------------
+# =========================
+# ADMIN PANEL
+# =========================
 
 @dp.message(Command("admin"))
 async def admin_panel(message: Message):
+
     if message.from_user.id != ADMIN_ID:
         return
 
@@ -247,32 +297,38 @@ async def admin_panel(message: Message):
         f"""
 🛠 Admin Panel
 
-👤 Users: {len(users_lang)}
-📄 Requests: {len(reports_db)}
+👤 Total Users: {len(users_lang)}
 
-System Status: Online
-Logs: Active
-Database: Connected
-Queue: Running
+📄 Total Requests: {len(reports_db)}
+
+🟢 System Status: Online
+
+⚡ Queue Status: Running
+
+📦 Database: Connected
+
+📝 Logs: Active
         """
     )
 
-# -----------------------------
-# Logs
-# -----------------------------
+# =========================
+# LOGS
+# =========================
 
 @dp.message(Command("logs"))
 async def logs(message: Message):
+
     if message.from_user.id != ADMIN_ID:
         return
 
-    if not reports_db:
-        await message.answer("No logs")
+    if len(reports_db) == 0:
+        await message.answer("No Logs")
         return
 
     text = ""
 
     for item in reports_db[-10:]:
+
         text += (
             f"User: {item['user']}\n"
             f"Type: {item['type']}\n"
@@ -281,13 +337,128 @@ async def logs(message: Message):
 
     await message.answer(text)
 
-# -----------------------------
-# Main
-# -----------------------------
+# =========================
+# BROADCAST
+# =========================
+
+@dp.message(Command("broadcast"))
+async def broadcast(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    msg = message.text.replace(
+        "/broadcast",
+        ""
+    ).strip()
+
+    success = 0
+
+    for user_id in users_lang.keys():
+
+        try:
+            await bot.send_message(
+                user_id,
+                msg
+            )
+
+            success += 1
+
+        except:
+            pass
+
+    await message.answer(
+        f"Broadcast Sent To {success} Users"
+    )
+
+# =========================
+# BAN
+# =========================
+
+@dp.message(Command("ban"))
+async def ban_user(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    try:
+
+        user_id = int(
+            message.text.split()[1]
+        )
+
+        banned_users.add(user_id)
+
+        await message.answer(
+            f"User {user_id} banned"
+        )
+
+    except:
+
+        await message.answer(
+            "Usage:\n/ban USER_ID"
+        )
+
+# =========================
+# UNBAN
+# =========================
+
+@dp.message(Command("unban"))
+async def unban_user(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    try:
+
+        user_id = int(
+            message.text.split()[1]
+        )
+
+        banned_users.discard(user_id)
+
+        await message.answer(
+            f"User {user_id} unbanned"
+        )
+
+    except:
+
+        await message.answer(
+            "Usage:\n/unban USER_ID"
+        )
+
+# =========================
+# HELP
+# =========================
+
+@dp.message(Command("help"))
+async def help_command(message: Message):
+
+    await message.answer(
+        """
+📚 Commands
+
+/start
+/help
+/admin
+/logs
+/stats
+/ban
+/unban
+/broadcast
+        """
+    )
+
+# =========================
+# MAIN
+# =========================
 
 async def main():
-    print("Bot Started")
+
+    print("Bot Started Successfully")
+
     await dp.start_polling(bot)
 
 if name == "main":
     asyncio.run(main())
+``
