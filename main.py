@@ -4,21 +4,20 @@ ADMIN_ID = 8085768728  # أيديك هنا
 DEV_LINK = "https://t.me/devazf" # رابط حسابك
 VIDEO_LINK = "https://www.kapwing.com/videos/69fec48780feec35535da996"
 
-# قاموس اللغات الاحترافي
 STRINGS = {
     'en': {
-        'welcome': "🔥 **Instagram Report Pro v3.0**\nChoose your language:",
+        'welcome': "🔥 **Instagram Report Pro v3.0**\nChoose Language:",
         'main_menu': "Main Dashboard:",
         'add_session': "🔑 Add Session",
         'start_report': "🎯 Start Reporting",
-        'dev_btn': "👨‍💻 Programmer",
+        'dev_btn': "👨‍💻 Developer",
         'admin_btn': "🛠 Admin Panel",
-        'target_prompt': "Please send Target Username or Link:",
+        'target_prompt': "Send Target Username or Link:",
         'type_prompt': "Select Content Type:",
         'reason_prompt': "Select Report Reason:",
-        'stats': "📊 **Live Status**\n\n✅ Sent: {}\n❌ Failed: {}\n⏱ Interval: Random (3-6s)\n\nDo you want to stop?",
+        'stats': "📊 **Live Status**\n\n✅ Sent: {}\n❌ Failed: {}\n⏱ Interval: Random (3-6s)\n\nStop?",
         'stop_btn': "STOP 🛑",
-        'locked': "🚫 Bot is currently locked by Admin.",
+        'locked': "🚫 Bot is Locked.",
         'back': "🔙 Back"
     },
     'ar': {
@@ -26,14 +25,14 @@ STRINGS = {
         'main_menu': "لوحة التحكم الرئيسية:",
         'add_session': "🔑 إضافة سيشن",
         'start_report': "🎯 بدء البلاغات",
-        'dev_btn': "👨‍💻 المبرمج",
+        'dev_btn': "👨‍💻 المطور",
         'admin_btn': "🛠 لوحة الإدارة",
         'target_prompt': "أرسل يوزر الهدف أو الرابط:",
         'type_prompt': "اختر نوع المحتوى:",
         'reason_prompt': "اختر سبب البلاغ:",
-        'stats': "📊 **إحصائيات مباشرة**\n\n✅ ناجح: {}\n❌ فشل: {}\n⏱ الفارق: عشوائي (3-6ث)\n\nهل تريد التوقف؟",
+        'stats': "📊 **إحصائيات مباشرة**\n\n✅ ناجح: {}\n❌ فشل: {}\n⏱ الفارق: عشوائي (3-6ث)\n\nإيقاف؟",
         'stop_btn': "إيقاف 🛑",
-        'locked': "🚫 البوت مغلق حالياً من قبل الإدارة.",
+        'locked': "🚫 البوت مغلق حالياً.",
         'back': "🔙 عودة"
     }
 }
@@ -48,7 +47,7 @@ class BotDB:
         try:
             with open(self.path, "r") as f: self.data = json.load(f)
         except:
-            self.data = {"locked": False, "users": {}}
+            self.data = {"locked": False, "users": {}, "total_reports": 0}
 
     def save(self):
         with open(self.path, "w") as f: json.dump(self.data, f)
@@ -82,9 +81,9 @@ def gen_inline(btns_dict, row_width=2):
 @bot.message_handler(commands=['start'])
 def start(message):
     uid = message.from_user.id
+    db.set_lang(uid, 'en') # لغة افتراضية
     if db.data["locked"] and uid != ADMIN_ID:
-        return bot.send_message(message.chat.id, STRINGS['ar']['locked'] if 'ar' in message.from_user.language_code else STRINGS['en']['locked'])
-    
+        return bot.send_message(message.chat.id, STRINGS['ar']['locked'])
     btns = {"العربية 🇸🇦": "set_ar", "English 🇺🇸": "set_en"}
     bot.send_message(message.chat.id, STRINGS['en']['welcome'], reply_markup=gen_inline(btns), parse_mode="Markdown")
 
@@ -92,57 +91,34 @@ def start(message):
 def callback_handler(call):
     uid = call.from_user.id
     cid = call.message.chat.id
+    lang = db.get_lang(uid)
 
-    # 1. تغيير اللغة
     if call.data.startswith("set_"):
-        lang = call.data.split("_")[1]
-        db.set_lang(uid, lang)
+        new_lang = call.data.split("_")[1]
+        db.set_lang(uid, new_lang)
         show_main(cid, uid)
-
-    # 2. العودة للقائمة الرئيسية
-    elif call.data == "main":
-        show_main(cid, uid)
-
-    # 3. بدء عملية البلاغ
+    elif call.data == "main": show_main(cid, uid)
     elif call.data == "pre_rpt":
-        lang = db.get_lang(uid)
         msg = bot.send_message(cid, STRINGS[lang]['target_prompt'])
         bot.register_next_step_handler(msg, process_target, lang)
-
-    # 4. لوحة الإدارة
-    elif call.data == "adm_panel":
-        if uid != ADMIN_ID: return
-        lang = db.get_lang(uid)
-        status = "LOCKED" if db.data["locked"] else "OPEN"
+    elif call.data == "adm_panel" and uid == ADMIN_ID:
+        status = "🔒 LOCKED" if db.data["locked"] else "🔓 OPEN"
         btns = {"Toggle Lock": "t_lock", STRINGS[lang]['back']: "main"}
-        bot.edit_message_text(f"🛠 Admin Panel\nStatus: {status}\nUsers: {len(db.data['users'])}", cid, call.message.message_id, reply_markup=gen_inline(btns))
-
+        bot.edit_message_text(f"🛠 Admin Panel\nStatus: {status}", cid, call.message.message_id, reply_markup=gen_inline(btns))
     elif call.data == "t_lock":
         db.data["locked"] = not db.data["locked"]
         db.save()
-        callback_handler(call) # Refresh
-
-    elif call.data == "stop_loop":
-        active_tasks[cid] = False
-        bot.answer_callback_query(call.id, "Stopped ✅")
+        callback_handler(call)
+    elif call.data == "stop_loop": active_tasks[cid] = False
 
 def show_main(cid, uid):
     lang = db.get_lang(uid)
-    btns = {
-        STRINGS[lang]['add_session']: "add_s",
-        STRINGS[lang]['start_report']: "pre_rpt",
-        STRINGS[lang]['dev_btn']: "dev_url",
-        STRINGS[lang]['admin_btn'] if uid == ADMIN_ID else "---": "adm_panel"
-    }
-    # ملاحظة: زر المطور يحتاج رابط URL
+    btns = {STRINGS[lang]['add_session']: "add_s", STRINGS[lang]['start_report']: "pre_rpt", 
+            STRINGS[lang]['dev_btn']: "dev_url", STRINGS[lang]['admin_btn'] if uid == ADMIN_ID else "---": "adm_panel"}
     markup = gen_inline(btns)
-    # تعديل زر المطور ليكون رابطاً حقيقياً
     for row in markup.keyboard:
         for btn in row:
-            if btn.callback_data == "dev_url":
-                btn.callback_data = None
-                btn.url = DEV_LINK
-                
+            if btn.callback_data == "dev_url": btn.callback_data = None; btn.url = DEV_LINK
     bot.send_message(cid, STRINGS[lang]['main_menu'], reply_markup=markup)
 
 def process_target(message, lang):
@@ -165,14 +141,14 @@ def start_engine(call):
 
 def reporting_loop(cid, lang):
     sent, fail = 0, 0
-    stop_btn = {STRINGS[lang]['stop_btn']: "stop_loop"}
     while active_tasks.get(cid):
-        time.sleep(random.uniform(3.5, 5.9))
+        time.sleep(random.uniform(3.5, 5.5))
         sent += 1
-        caption = STRINGS[lang]['stats'].format(sent, fail)
-        try:
-            bot.send_video(cid, VIDEO_LINK, caption=caption, reply_markup=gen_inline(stop_btn), parse_mode="Markdown")
+        db.data["total_reports"] += 1; db.save()
+        markup = gen_inline({STRINGS[lang]['stop_btn']: "stop_loop"})
+        try: bot.send_video(cid, VIDEO_LINK, caption=STRINGS[lang]['stats'].format(sent, fail), reply_markup=markup, parse_mode="Markdown")
         except: break
-        if not active_tasks.get(cid): break
+    bot.send_message(cid, "✅ Finished/Stopped")
 
 bot.infinity_polling()
+
