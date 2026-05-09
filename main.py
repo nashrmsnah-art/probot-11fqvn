@@ -1,4 +1,3 @@
-```python id="9m2x6v"
 import asyncio
 import logging
 from datetime import datetime
