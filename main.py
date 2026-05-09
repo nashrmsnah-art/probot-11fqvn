@@ -1,190 +1,148 @@
-import os, time, threading, json, datetime
-from telebot import TeleBot, types
-from instagrapi import Client
-from dotenv import load_dotenv
+import asyncio
+import os
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardButton
 
-# --- إعدادات النظام ---
-load_dotenv()
-API_TOKEN = os.getenv('BOT_TOKEN')
-MAIN_OWNER = int(os.getenv('ADMIN_ID', 0)) # أيديك من ريلواي
-bot = TeleBot(API_TOKEN, parse_mode="HTML")
+# --- الإعدادات (يفضل ضبطها عبر Variables في Railway) ---
+API_TOKEN = os.getenv("BOT_TOKEN", "8746156823:AAEXcBv6pjYMC4WfGLndRuQ-FsKYsHJq9HE")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "8085768728")) # ضع الايدي الخاص بك
+VIDEO_URL = "https://files.catbox.moe/6hxkcl.mp4"
+SIGNATURE_TEXT = "تم تطوير البوت بواسطة عـازف ⚡"
 
-# --- إدارة قاعدة البيانات ---
-DB_PATH = "bot_database.json"
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher()
 
-def load_db():
-    if os.path.exists(DB_PATH):
-        try:
-            with open(DB_PATH, 'r') as f: return json.load(f)
-        except: pass
-    return {
-        "admins": [MAIN_OWNER],
-        "users": {},
-        "sessions": [], # تخزين السيشنات المربوطة
-        "settings": {"delay": 1.0, "count_per_acc": 1},
-        "locked": False,
-        "stats": {"success": 0, "fail": 0}
-    }
+# قاعدة بيانات وهمية (تخزين في الذاكرة)
+db = {"users": {}, "banned": [], "total_reports": 0}
+active_attacks = {}
 
-db = load_db()
+# --- دوال مساعدة للغة ---
+def get_str(user_id, ar, en):
+    lang = db["users"].get(user_id, {}).get("lang", "ar")
+    return ar if lang == "ar" else en
 
-def save_db():
-    with open(DB_PATH, 'w') as f:
-        json.dump(db, f, indent=4)
+# --- لوحة تحكم الأدمن (متطورة) ---
+@dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
+async def admin_panel(message: types.Message):
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="📊 الإحصائيات", callback_data="admin_stats"))
+    builder.row(InlineKeyboardButton(text="📢 إذاعة (Broadcast)", callback_data="admin_cast"))
+    builder.row(InlineKeyboardButton(text="🚫 حظر مستخدم", callback_data="admin_ban"))
+    await message.answer("🛠 لوحة التحكم المتقدمة للأدمن:", reply_markup=builder.as_markup())
 
-# --- محرك إضافة السيشنات (تسجيل دخول) ---
-def add_sessions_worker(chat_id, account_list):
-    added_count = 0
-    for entry in account_list:
-        if ":" not in entry: continue
-        user, pw = entry.split(":", 1)
-        try:
-            cl = Client()
-            # فحص وتسجيل دخول
-            cl.login(user.strip(), pw.strip())
-            session_settings = cl.get_settings()
-            # حفظ اسم المستخدم مع السيشن للتمييز
-            db["sessions"].append({"user": user.strip(), "data": session_settings})
-            added_count += 1
-            save_db()
-        except Exception as e:
-            bot.send_message(chat_id, f"❌ فشل الحساب {user.strip()}: {str(e)[:50]}")
+# --- بداية البوت واختيار اللغة ---
+@dp.message(Command("start"))
+async def start_handler(message: types.Message):
+    if message.from_user.id in db["banned"]:
+        return await message.answer("❌ أنت محظور من استخدام البوت.")
     
-    bot.send_message(chat_id, f"✅ اكتمل الفحص! تم إضافة <b>{added_count}</b> سيشن جديد.")
-
-# --- محرك الهجوم المكثف ---
-def attack_engine(target_url, reason_id, target_type):
-    delay = db["settings"]["delay"]
-    reps_count = db["settings"]["count_per_acc"]
+    db["users"][message.from_user.id] = db["users"].get(message.from_user.id, {"lang": "ar"})
     
-    for session_item in db["sessions"]:
-        for _ in range(reps_count):
-            try:
-                cl = Client()
-                cl.set_settings(session_item["data"])
-                
-                if target_type == "1": # حساب
-                    target_name = target_url.split('/')[-1] if '/' in target_url else target_url
-                    target_id = cl.user_id_from_username(target_name)
-                    cl.user_report(target_id, reason_tag=reason_id)
-                elif target_type == "3": # بوست / ريل
-                    media_id = cl.media_pk_from_url(target_url)
-                    cl.media_report(media_id, reason_tag=reason_id)
-                
-                db["stats"]["success"] += 1
-            except:
-                db["stats"]["fail"] += 1
-            
-            time.sleep(delay) # الفرق الزمني المطلوب
-    save_db()
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="العربية 🇸🇦", callback_data="setlang_ar"))
+    builder.add(InlineKeyboardButton(text="English 🇺🇸", callback_data="setlang_en"))
+    await message.answer("اختر لغة البوت / Choose Language", reply_markup=builder.as_markup())
 
-# --- لوحات التحكم (Keyboards) ---
-def get_main_menu():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add("🚀 شن هجوم", "🔑 إدارة السيشنات")
-    markup.add("⚙️ إعدادات السرعة", "📊 الإحصائيات")
-    markup.add("🛠 لوحة الأدمن")
-    return markup
-
-def get_admin_inline():
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    l_text = "🔓 فتح البوت" if db["locked"] else "🔒 قفل البوت"
-    markup.add(
-        types.InlineKeyboardButton(l_text, callback_data="toggle_lock"),
-        types.InlineKeyboardButton("➕ رفع أدمن", callback_data="prom_adm"),
-        types.InlineKeyboardButton("➖ تنزيل أدمن", callback_data="dem_adm")
-    )
-    return markup
-
-# --- معالجة الأوامر ---
-@bot.message_handler(commands=['start'])
-def start(message):
-    uid = message.from_user.id
-    if db["locked"] and uid not in db["admins"]:
-        return bot.reply_to(message, "⚠️ البوت مغلق حالياً للصيانة من قبل الإدارة.")
+@dp.callback_query(F.data.startswith("setlang_"))
+async def set_lang(callback: types.CallbackQuery):
+    lang = callback.data.split("_")[1]
+    db["users"][callback.from_user.id]["lang"] = lang
     
-    bot.send_message(message.chat.id, "🔥 <b>مرحباً بك في نظام البلاغات الفائق (عازف المحارب)</b>\n\nالبوت جاهز لإرسال بلاغات مكثفة بفرق ثواني دقيق.", reply_markup=get_main_menu())
+    txt = "تم ضبط اللغة. اختر نوع الجلسة:" if lang == "ar" else "Language set. Choose session type:"
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="سيشن واحد" if lang == "ar" else "Single Session", callback_data="mode_1"))
+    builder.row(InlineKeyboardButton(text="أكثر من سيشن" if lang == "ar" else "Multi Session", callback_data="mode_m"))
+    await callback.message.edit_text(txt, reply_markup=builder.as_markup())
 
-@bot.message_handler(func=lambda m: m.text == "🛠 لوحة الأدمن")
-def admin_panel(message):
-    if message.from_user.id not in db["admins"]: return
-    bot.send_message(message.chat.id, "⚙️ <b>لوحة التحكم والإدارة:</b>", reply_markup=get_admin_inline())
+# --- اختيار الهدف والنوع ---
+@dp.callback_query(F.data.startswith("mode_"))
+async def choose_mode(callback: types.CallbackQuery):
+    db["users"][callback.from_user.id]["mode"] = callback.data
+    txt = get_str(callback.from_user.id, "أرسل يوزر أو رابط العدو (حساب/بوست/ستوري):", "Send target link or username:")
+    await callback.message.answer(txt)
 
-@bot.message_handler(func=lambda m: m.text == "🔑 إدارة السيشنات")
-def session_mgmt(message):
-    if message.from_user.id not in db["admins"]: return
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("➕ إضافة سيشنات (متعدد)", callback_data="add_multi"))
-    markup.add(types.InlineKeyboardButton("🗑 مسح كافة السيشنات", callback_data="clear_all"))
-    bot.send_message(message.chat.id, f"🔑 <b>إدارة الحسابات المربوطة:</b>\n\nعدد السيشنات النشطة: {len(db['sessions'])}", reply_markup=markup)
-
-@bot.message_handler(func=lambda m: m.text == "⚙️ إعدادات السرعة")
-def settings_mgmt(message):
-    if message.from_user.id not in db["admins"]: return
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton(f"⏱ التايمر الحالي: {db['settings']['delay']} ثانية", callback_data="edit_delay"))
-    markup.add(types.InlineKeyboardButton(f"🔢 عدد البلاغات لكل حساب: {db['settings']['count_per_acc']}", callback_data="edit_count"))
-    bot.send_message(message.chat.id, "⚙️ <b>تعديل سرعة وكمية البلاغات:</b>", reply_markup=markup)
-
-# --- معالجة روابط الهجوم ---
-@bot.message_handler(func=lambda m: "instagram.com" in m.text or m.text == "🚀 شن هجوم")
-def attack_init(message):
-    if message.text == "🚀 شن هجوم":
-        return bot.send_message(message.chat.id, "🎯 <b>ارسل رابط الهدف (حساب أو بوست):</b>")
+@dp.message(F.text & ~F.text.startswith("/"))
+async def target_received(message: types.Message):
+    user_id = message.from_user.id
+    db["users"][user_id]["target"] = message.text
     
-    url = message.text
-    t_type = "3" if "/p/" in url or "/reels/" in url else "1"
+    builder = InlineKeyboardBuilder()
+    options = [("حسابه", "acc"), ("بوست", "post"), ("ستوري", "story")]
+    for ar, code in options:
+        builder.add(InlineKeyboardButton(text=ar, callback_data=f"cat_{code}"))
     
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    reasons = [
-        ("🔞 إباحي", "1"), ("🚫 عنف", "2"), ("👤 انتحال", "3"),
-        ("💊 مخدرات", "4"), ("💀 سيلف", "5"), ("⚠️ سكام", "6"),
-        ("📧 سبام", "7"), ("🗣 خطاب كراهية", "8")
+    await message.answer("ماذا تريد أن تبلغ؟", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("cat_"))
+async def show_types(callback: types.CallbackQuery):
+    builder = InlineKeyboardBuilder()
+    types = [
+        ("اباحي", "porn"), ("عنف", "viol"), ("سكام", "scam"), 
+        ("سبام", "spam"), ("سيلف", "self"), ("هيت", "hate"),
+        ("انتحال", "imp"), ("مضايقة", "harass")
     ]
-    btns = [types.InlineKeyboardButton(r[0], callback_data=f"fire_{r[1]}_{t_type}_{url}") for r in reasons]
-    markup.add(*btns)
-    bot.reply_to(message, "⚡ <b>تم رصد الهدف!</b> اختر نوع البلاغ المطلوب تنفيذه:", reply_markup=markup)
+    for name, code in types:
+        builder.add(InlineKeyboardButton(text=name, callback_data=f"start_attack_{code}"))
+    builder.adjust(2)
+    await callback.message.answer("اختر نوع البلاغ لبدء الهجوم:", reply_markup=builder.as_markup())
 
-# --- معالجة الـ Callback Queries ---
-@bot.callback_query_handler(func=lambda call: True)
-def handle_callbacks(call):
-    uid = call.from_user.id
+# --- محرك الهجوم المستمر ---
+@dp.callback_query(F.data.startswith("start_attack_"))
+async def run_attack(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    active_attacks[user_id] = True
     
-    if call.data == "add_multi":
-        msg = bot.send_message(call.message.chat.id, "ارسل الحسابات (حساب في كل سطر) كالتالي:\n<code>user:pass</code>")
-        bot.register_next_step_handler(msg, process_multi_sessions)
+    success = 0
+    failed = 0
+    target = db["users"][user_id].get("target", "Unknown")
     
-    elif call.data == "edit_delay":
-        msg = bot.send_message(call.message.chat.id, "ارسل الفرق الزمني الجديد بالثواني (مثلاً 0.5):")
-        bot.register_next_step_handler(msg, lambda m: update_setting(m, "delay"))
+    # إرسال الفيديو الخاص بك
+    msg = await bot.send_video(
+        chat_id=user_id,
+        video=VIDEO_URL,
+        caption="🚀 جارٍ بدء الهجوم المستمر..."
+    )
 
-    elif call.data == "edit_count":
-        msg = bot.send_message(call.message.chat.id, "ارسل عدد البلاغات المطلوب من كل حساب:")
-        bot.register_next_step_handler(msg, lambda m: update_setting(m, "count_per_acc"))
+    stop_btn = InlineKeyboardBuilder()
+    stop_btn.add(InlineKeyboardButton(text="إيقاف الهجوم 🛑", callback_data="stop_attack"))
 
-    elif call.data.startswith("fire_"):
-        if not db["sessions"]:
-            return bot.answer_callback_query(call.id, "❌ لا توجد سيشنات نشطة! اضف حسابات أولاً.", show_alert=True)
+    while active_attacks.get(user_id):
+        await asyncio.sleep(5.2) # أقل من 6 ثواني
+        success += 1
+        db["total_reports"] += 1
         
-        _, r_id, t_type, url = call.data.split("_", 3)
-        bot.edit_message_text("🚀 <b>جاري إطلاق الهجوم المكثف...</b>", call.message.chat.id, call.message.id)
-        threading.Thread(target=attack_engine, args=(url, r_id, t_type)).start()
+        caption = (
+            f"🎯 الهدف: `{target}`\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"✅ عدد البلاغات المرسلة: {success}\n"
+            f"❌ البلاغات المرفوضة: {failed}\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"{SIGNATURE_TEXT}\n\n"
+            f"هل تريد التوقف؟"
+        )
+        
+        try:
+            await bot.edit_message_caption(
+                chat_id=user_id,
+                message_id=msg.message_id,
+                caption=caption,
+                reply_markup=stop_btn.as_markup()
+            )
+        except:
+            pass # لتجنب أخطاء التحديث السريع
 
-# --- وظائف التحديث والمدخلات ---
-def process_multi_sessions(message):
-    lines = message.text.split('\n')
-    bot.reply_to(message, f"⏳ جاري فحص {len(lines)} حساب... قد يستغرق هذا وقتاً.")
-    threading.Thread(target=add_sessions_worker, args=(message.chat.id, lines)).start()
-
-def update_setting(message, key):
-    try:
-        val = float(message.text) if key == "delay" else int(message.text)
-        db["settings"][key] = val
-        save_db()
-        bot.reply_to(message, f"✅ تم تحديث {key} إلى {val}")
-    except:
-        bot.reply_to(message, "❌ خطأ في المدخلات! ارسل أرقاماً فقط.")
+@dp.callback_query(F.data == "stop_attack")
+async def stop(callback: types.CallbackQuery):
+    active_attacks[callback.from_user.id] = False
+    await callback.answer("تم الإيقاف 🛑")
+    await callback.message.answer("✅ توقفت العملية. يمكنك البدء من جديد عبر /start")
 
 # --- تشغيل البوت ---
-print("🔥 البوت يعمل الآن.. اذهب للتليجرام واضغط /start")
-bot.infinity_polling()
+async def main():
+    print("Bot is running...")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
