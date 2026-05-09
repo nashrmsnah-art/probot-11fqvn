@@ -1,4 +1,3 @@
-pyTelegramBotAPI
+aiogram
 instagrapi
-python-dotenv
-pillow
+aiohttp
