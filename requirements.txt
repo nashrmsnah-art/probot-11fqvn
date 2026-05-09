@@ -1,5 +1,2 @@
-pyTelegramBotAPI
-instagrapi
-python-dotenv
-pillow
-requests
+aiogram==2.25.1
+telethon==1.34.0
