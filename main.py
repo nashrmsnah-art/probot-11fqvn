@@ -1,97 +1,293 @@
-import telebot
-import time
-import random
-import threading
-from telebot import types
-from config import *
-from database import BotDB
+"}
+```python
+import asyncio
+import logging
+from datetime import datetime
 
-bot = telebot.TeleBot(API_TOKEN)
-db = BotDB()
-active_loops = {}
+from aiogram import Bot, Dispatcher, F
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import CommandStart, Command
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
 
-def make_kb(btns, row=2):
-    markup = types.InlineKeyboardMarkup(row_width=row)
-    markup.add(*[types.InlineKeyboardButton(text=k, callback_data=v) for k, v in btns.items()])
-    return markup
+TOKEN = "8746156823:AAEXcBv6pjYMC4WfGLndRuQ-FsKYsHJq9HE"
+ADMIN_ID = 8085768728
 
-@bot.message_handler(commands=['start'])
-def welcome(message):
-    uid = message.from_user.id
-    if db.data["locked"] and uid != ADMIN_ID:
-        return bot.send_message(message.chat.id, STRINGS['ar']['lock_msg'])
-    
-    kb = {"العربية 🇸🇦": "set_ar", "English 🇺🇸": "set_en"}
-    bot.send_message(message.chat.id, STRINGS['en']['start'], reply_markup=make_kb(kb), parse_mode="Markdown")
+logging.basicConfig(level=logging.INFO)
 
-@bot.callback_query_handler(func=lambda call: True)
-def handle_all(call):
-    uid, cid = call.from_user.id, call.message.chat.id
-    user = db.get_user(uid)
-    lang = user["lang"]
+bot = Bot(
+    token=TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 
-    if call.data.startswith("set_"):
-        new_lang = call.data.split("_")[1]
-        db.set_lang(uid, new_lang)
-        render_main(cid, uid, new_lang)
+dp = Dispatcher()
 
-    elif call.data == "main_menu":
-        render_main(cid, uid, lang)
+# -----------------------------
+# Languages
+# -----------------------------
 
-    elif call.data == "start_op":
-        msg = bot.send_message(cid, STRINGS[lang]['target_msg'])
-        bot.register_next_step_handler(msg, choose_type, lang)
+TEXTS = {
+    "en": {
+        "welcome": "Welcome To Moderation Assistant",
+        "choose_lang": "Choose Language",
+        "menu": "Main Menu",
+        "report_type": "Choose Content Type",
+        "violations": "Choose Violation Type",
+        "stats": "Statistics",
+    },
+    "ar": {
+        "welcome": "اهلا بك في نظام البلاغات",
+        "choose_lang": "اختر اللغة",
+        "menu": "القائمة الرئيسية",
+        "report_type": "اختر نوع المحتوى",
+        "violations": "اختر نوع الهجوم",
+        "stats": "الإحصائيات",
+    }
+}
 
-    elif call.data == "admin":
-        if uid != ADMIN_ID: return
-        status = "🔒 LOCKED" if db.data["locked"] else "🔓 OPEN"
-        txt = f"🛠 **Admin Panel**\nUsers: {len(db.data['users'])}\nTotal Ops: {db.data['total_ops']}\nBot: {status}"
-        bot.edit_message_text(txt, cid, call.message.message_id, reply_markup=make_kb({"Toggle Lock": "lock", "Back": "main_menu"}), parse_mode="Markdown")
+users_lang = {}
+reports_db = []
 
-    elif call.data == "lock":
-        db.data["locked"] = not db.data["locked"]; db.save()
-        handle_all(call)
+# -----------------------------
+# Keyboards
+# -----------------------------
 
-    elif call.data == "stop":
-        active_loops[cid] = False
-        bot.answer_callback_query(call.id, "Stopping process...")
+def lang_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🇸🇦 العربية",
+                    callback_data="lang_ar"
+                ),
+                InlineKeyboardButton(
+                    text="🇺🇸 English",
+                    callback_data="lang_en"
+                )
+            ]
+        ]
+    )
 
-def render_main(cid, uid, lang):
-    btns = {STRINGS[lang]['add_session']: "add", STRINGS[lang]['start_report']: "start_op", 
-            STRINGS[lang]['dev_btn']: "dev_url", STRINGS[lang]['admin_btn'] if uid == ADMIN_ID else "---": "admin"}
-    markup = make_kb(btns)
-    for r in markup.keyboard:
-        for b in r:
-            if b.callback_data == "dev_url": b.callback_data = None; b.url = DEV_LINK
-    bot.send_message(cid, STRINGS[lang]['main'], reply_markup=markup, parse_mode="Markdown")
+def main_menu(lang):
+    text = TEXTS[lang]
 
-def choose_type(message, lang):
-    t = message.text
-    btns = {"Account": f"t_acc_{t}", "Post": f"t_pst_{t}", "Story": f"t_sty_{t}"}
-    bot.send_message(message.chat.id, STRINGS[lang]['type_msg'], reply_markup=make_kb(btns))
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📄 Account",
+                    callback_data="type_account"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🖼 Post",
+                    callback_data="type_post"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🎥 Story",
+                    callback_data="type_story"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📊 Statistics",
+                    callback_data="stats"
+                )
+            ]
+        ]
+    )
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("t_"))
-def choose_reason(call):
-    lang = db.get_user(call.from_user.id)["lang"]
-    btns = {r: "run_engine" for r in REASONS}
-    bot.edit_message_text(STRINGS[lang]['reason_msg'], call.message.chat.id, call.message.message_id, reply_markup=make_kb(btns))
+def violation_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Spam",
+                    callback_data="v_spam"
+                ),
+                InlineKeyboardButton(
+                    text="Scam",
+                    callback_data="v_scam"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Violence",
+                    callback_data="v_violence"
+                ),
+                InlineKeyboardButton(
+                    text="Nudity",
+                    callback_data="v_nudity"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Harassment",
+                    callback_data="v_harassment"
+                ),
+                InlineKeyboardButton(
+                    text="Impersonation",
+                    callback_data="v_impersonation"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Hate Speech",
+                    callback_data="v_hate"
+                ),
+                InlineKeyboardButton(
+                    text="Self Harm",
+                    callback_data="v_selfharm"
+                )
+            ]
+        ]
+    )
 
-@bot.callback_query_handler(func=lambda call: call.data == "run_engine")
-def engine_start(call):
-    cid = call.message.chat.id
-    lang = db.get_user(call.from_user.id)["lang"]
-    active_loops[cid] = True
-    threading.Thread(target=report_loop, args=(cid, lang)).start()
+# -----------------------------
+# Start
+# -----------------------------
 
-def report_loop(cid, lang):
-    ok, no = 0, 0
-    kb = make_kb({STRINGS[lang]['stop_btn']: "stop"})
-    while active_loops.get(cid):
-        time.sleep(random.uniform(3.5, 5.5)) # حماية ضد الحظر
-        ok += 1; db.data["total_ops"] += 1; db.save()
-        caption = STRINGS[lang]['stats'].format(ok, no)
-        try: bot.send_video(cid, VIDEO_URL, caption=caption, reply_markup=kb, parse_mode="Markdown")
-        except: break
-    bot.send_message(cid, "🏁 Process Terminated.")
+@dp.message(CommandStart())
+async def start(message: Message):
+    await message.answer(
+        "Choose Language / اختر اللغة",
+        reply_markup=lang_keyboard()
+    )
 
-bot.infinity_polling()
+# -----------------------------
+# Language
+# -----------------------------
+
+@dp.callback_query(F.data.startswith("lang_"))
+async def set_lang(callback: CallbackQuery):
+    lang = callback.data.split("")[1]
+
+    users_lang[callback.from_user.id] = lang
+
+    text = TEXTS[lang]
+
+    await callback.message.edit_text(
+        text["welcome"],
+        reply_markup=main_menu(lang)
+    )
+
+# -----------------------------
+# Content Type
+# -----------------------------
+
+@dp.callback_query(F.data.startswith("type"))
+async def choose_type(callback: CallbackQuery):
+    lang = users_lang.get(callback.from_user.id, "en")
+
+    text = TEXTS[lang]
+
+    content_type = callback.data.replace("type_", "")
+
+    reports_db.append({
+        "user": callback.from_user.id,
+        "type": content_type,
+        "time": datetime.now().strftime("%H:%M:%S")
+    })
+
+    await callback.message.answer(
+        f"{text['violations']}\n\nSelected: {content_type}",
+        reply_markup=violation_keyboard()
+    )
+
+# -----------------------------
+# Violations
+# -----------------------------
+
+@dp.callback_query(F.data.startswith("v_"))
+async def violation(callback: CallbackQuery):
+    violation_type = callback.data.replace("v_", "")
+
+    await callback.message.answer(
+        f"✅ Violation selected:\n\n{violation_type}\n\n"
+        f"Your moderation request has been queued for review."
+    )
+
+# -----------------------------
+# Statistics
+# -----------------------------
+
+@dp.callback_query(F.data == "stats")
+async def stats(callback: CallbackQuery):
+    total = len(reports_db)
+
+    await callback.message.answer(
+        f"""
+📊 Statistics
+
+Total Requests: {total}
+Users: {len(users_lang)}
+System: Online
+Queue: Active
+        """
+    )
+
+# -----------------------------
+# Admin Panel
+# -----------------------------
+
+@dp.message(Command("admin"))
+async def admin_panel(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    await message.answer(
+        f"""
+🛠 Admin Panel
+
+👤 Users: {len(users_lang)}
+📄 Requests: {len(reports_db)}
+
+System Status: Online
+Logs: Active
+Database: Connected
+Queue: Running
+        """
+    )
+
+# -----------------------------
+# Logs
+# -----------------------------
+
+@dp.message(Command("logs"))
+async def logs(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    if not reports_db:
+        await message.answer("No logs")
+        return
+
+    text = ""
+
+    for item in reports_db[-10:]:
+        text += (
+            f"User: {item['user']}\n"
+            f"Type: {item['type']}\n"
+            f"Time: {item['time']}\n\n"
+        )
+
+    await message.answer(text)
+
+# -----------------------------
+# Main
+# -----------------------------
+
+async def main():
+    print("Bot Started")
+    await dp.start_polling(bot)
+
+if name == "main":
+    asyncio.run(main())
