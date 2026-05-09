@@ -440,7 +440,6 @@ async def help_command(message: Message):
 /start
 /help
 /admin
-/logs
 /stats
 /ban
 /unban
