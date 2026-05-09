@@ -456,6 +456,3 @@ async def main():
     print("Bot Started Successfully")
 
     await dp.start_polling(bot)
-
-if name == "main":
-    asyncio.run(main())
