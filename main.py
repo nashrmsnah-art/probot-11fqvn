@@ -8,7 +8,7 @@ from aiogram.types import InlineKeyboardButton
 # --- الإعدادات (يفضل ضبطها عبر Variables في Railway) ---
 API_TOKEN = os.getenv("BOT_TOKEN", "8746156823:AAEXcBv6pjYMC4WfGLndRuQ-FsKYsHJq9HE")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8085768728")) # ضع الايدي الخاص بك
-VIDEO_URL = "https://files.catbox.moe/6hxkcl.mp4"
+VIDEO_URL = "https://www.kapwing.com/videos/69fec48780feec35535da996"
 SIGNATURE_TEXT = "تم تطوير البوت بواسطة عـازف ⚡"
 
 bot = Bot(token=API_TOKEN)
