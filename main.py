@@ -1,148 +1,178 @@
-import asyncio
-import os
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.filters import Command
-from aiogram.types import InlineKeyboardButton
+# --- Advanced Configuration ---
+API_TOKEN = '8746156823:AAEXcBv6pjYMC4WfGLndRuQ-FsKYsHJq9HE'
+ADMIN_ID = 8085768728  # أيديك هنا
+DEV_LINK = "https://t.me/devazf" # رابط حسابك
+VIDEO_LINK = "https://www.kapwing.com/videos/69fec48780feec35535da996"
 
-# --- الإعدادات (يفضل ضبطها عبر Variables في Railway) ---
-API_TOKEN = os.getenv("BOT_TOKEN", "8746156823:AAEXcBv6pjYMC4WfGLndRuQ-FsKYsHJq9HE")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "8085768728")) # ضع الايدي الخاص بك
-VIDEO_URL = "https://www.kapwing.com/videos/69fec48780feec35535da996"
-SIGNATURE_TEXT = "تم تطوير البوت بواسطة عـازف ⚡"
+# قاموس اللغات الاحترافي
+STRINGS = {
+    'en': {
+        'welcome': "🔥 **Instagram Report Pro v3.0**\nChoose your language:",
+        'main_menu': "Main Dashboard:",
+        'add_session': "🔑 Add Session",
+        'start_report': "🎯 Start Reporting",
+        'dev_btn': "👨‍💻 Programmer",
+        'admin_btn': "🛠 Admin Panel",
+        'target_prompt': "Please send Target Username or Link:",
+        'type_prompt': "Select Content Type:",
+        'reason_prompt': "Select Report Reason:",
+        'stats': "📊 **Live Status**\n\n✅ Sent: {}\n❌ Failed: {}\n⏱ Interval: Random (3-6s)\n\nDo you want to stop?",
+        'stop_btn': "STOP 🛑",
+        'locked': "🚫 Bot is currently locked by Admin.",
+        'back': "🔙 Back"
+    },
+    'ar': {
+        'welcome': "🔥 **بوت بلاغات إنستجرام المتطور v3.0**\nاختر لغة البوت:",
+        'main_menu': "لوحة التحكم الرئيسية:",
+        'add_session': "🔑 إضافة سيشن",
+        'start_report': "🎯 بدء البلاغات",
+        'dev_btn': "👨‍💻 المبرمج",
+        'admin_btn': "🛠 لوحة الإدارة",
+        'target_prompt': "أرسل يوزر الهدف أو الرابط:",
+        'type_prompt': "اختر نوع المحتوى:",
+        'reason_prompt': "اختر سبب البلاغ:",
+        'stats': "📊 **إحصائيات مباشرة**\n\n✅ ناجح: {}\n❌ فشل: {}\n⏱ الفارق: عشوائي (3-6ث)\n\nهل تريد التوقف؟",
+        'stop_btn': "إيقاف 🛑",
+        'locked': "🚫 البوت مغلق حالياً من قبل الإدارة.",
+        'back': "🔙 عودة"
+    }
+}
 
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+REASONS = ["Pornography", "Violence", "Scam", "Spam", "Self-harm", "Hate Speech", "Impersonation", "Harassment"]
 
-# قاعدة بيانات وهمية (تخزين في الذاكرة)
-db = {"users": {}, "banned": [], "total_reports": 0}
-active_attacks = {}
+import json
 
-# --- دوال مساعدة للغة ---
-def get_str(user_id, ar, en):
-    lang = db["users"].get(user_id, {}).get("lang", "ar")
-    return ar if lang == "ar" else en
-
-# --- لوحة تحكم الأدمن (متطورة) ---
-@dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
-async def admin_panel(message: types.Message):
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="📊 الإحصائيات", callback_data="admin_stats"))
-    builder.row(InlineKeyboardButton(text="📢 إذاعة (Broadcast)", callback_data="admin_cast"))
-    builder.row(InlineKeyboardButton(text="🚫 حظر مستخدم", callback_data="admin_ban"))
-    await message.answer("🛠 لوحة التحكم المتقدمة للأدمن:", reply_markup=builder.as_markup())
-
-# --- بداية البوت واختيار اللغة ---
-@dp.message(Command("start"))
-async def start_handler(message: types.Message):
-    if message.from_user.id in db["banned"]:
-        return await message.answer("❌ أنت محظور من استخدام البوت.")
-    
-    db["users"][message.from_user.id] = db["users"].get(message.from_user.id, {"lang": "ar"})
-    
-    builder = InlineKeyboardBuilder()
-    builder.add(InlineKeyboardButton(text="العربية 🇸🇦", callback_data="setlang_ar"))
-    builder.add(InlineKeyboardButton(text="English 🇺🇸", callback_data="setlang_en"))
-    await message.answer("اختر لغة البوت / Choose Language", reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data.startswith("setlang_"))
-async def set_lang(callback: types.CallbackQuery):
-    lang = callback.data.split("_")[1]
-    db["users"][callback.from_user.id]["lang"] = lang
-    
-    txt = "تم ضبط اللغة. اختر نوع الجلسة:" if lang == "ar" else "Language set. Choose session type:"
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="سيشن واحد" if lang == "ar" else "Single Session", callback_data="mode_1"))
-    builder.row(InlineKeyboardButton(text="أكثر من سيشن" if lang == "ar" else "Multi Session", callback_data="mode_m"))
-    await callback.message.edit_text(txt, reply_markup=builder.as_markup())
-
-# --- اختيار الهدف والنوع ---
-@dp.callback_query(F.data.startswith("mode_"))
-async def choose_mode(callback: types.CallbackQuery):
-    db["users"][callback.from_user.id]["mode"] = callback.data
-    txt = get_str(callback.from_user.id, "أرسل يوزر أو رابط العدو (حساب/بوست/ستوري):", "Send target link or username:")
-    await callback.message.answer(txt)
-
-@dp.message(F.text & ~F.text.startswith("/"))
-async def target_received(message: types.Message):
-    user_id = message.from_user.id
-    db["users"][user_id]["target"] = message.text
-    
-    builder = InlineKeyboardBuilder()
-    options = [("حسابه", "acc"), ("بوست", "post"), ("ستوري", "story")]
-    for ar, code in options:
-        builder.add(InlineKeyboardButton(text=ar, callback_data=f"cat_{code}"))
-    
-    await message.answer("ماذا تريد أن تبلغ؟", reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data.startswith("cat_"))
-async def show_types(callback: types.CallbackQuery):
-    builder = InlineKeyboardBuilder()
-    types = [
-        ("اباحي", "porn"), ("عنف", "viol"), ("سكام", "scam"), 
-        ("سبام", "spam"), ("سيلف", "self"), ("هيت", "hate"),
-        ("انتحال", "imp"), ("مضايقة", "harass")
-    ]
-    for name, code in types:
-        builder.add(InlineKeyboardButton(text=name, callback_data=f"start_attack_{code}"))
-    builder.adjust(2)
-    await callback.message.answer("اختر نوع البلاغ لبدء الهجوم:", reply_markup=builder.as_markup())
-
-# --- محرك الهجوم المستمر ---
-@dp.callback_query(F.data.startswith("start_attack_"))
-async def run_attack(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    active_attacks[user_id] = True
-    
-    success = 0
-    failed = 0
-    target = db["users"][user_id].get("target", "Unknown")
-    
-    # إرسال الفيديو الخاص بك
-    msg = await bot.send_video(
-        chat_id=user_id,
-        video=VIDEO_URL,
-        caption="🚀 جارٍ بدء الهجوم المستمر..."
-    )
-
-    stop_btn = InlineKeyboardBuilder()
-    stop_btn.add(InlineKeyboardButton(text="إيقاف الهجوم 🛑", callback_data="stop_attack"))
-
-    while active_attacks.get(user_id):
-        await asyncio.sleep(5.2) # أقل من 6 ثواني
-        success += 1
-        db["total_reports"] += 1
-        
-        caption = (
-            f"🎯 الهدف: `{target}`\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"✅ عدد البلاغات المرسلة: {success}\n"
-            f"❌ البلاغات المرفوضة: {failed}\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"{SIGNATURE_TEXT}\n\n"
-            f"هل تريد التوقف؟"
-        )
-        
+class BotDB:
+    def __init__(self):
+        self.path = "bot_data.json"
         try:
-            await bot.edit_message_caption(
-                chat_id=user_id,
-                message_id=msg.message_id,
-                caption=caption,
-                reply_markup=stop_btn.as_markup()
-            )
+            with open(self.path, "r") as f: self.data = json.load(f)
         except:
-            pass # لتجنب أخطاء التحديث السريع
+            self.data = {"locked": False, "users": {}}
 
-@dp.callback_query(F.data == "stop_attack")
-async def stop(callback: types.CallbackQuery):
-    active_attacks[callback.from_user.id] = False
-    await callback.answer("تم الإيقاف 🛑")
-    await callback.message.answer("✅ توقفت العملية. يمكنك البدء من جديد عبر /start")
+    def save(self):
+        with open(self.path, "w") as f: json.dump(self.data, f)
 
-# --- تشغيل البوت ---
-async def main():
-    print("Bot is running...")
-    await dp.start_polling(bot)
+    def get_lang(self, uid):
+        return self.data["users"].get(str(uid), {}).get("lang", "en")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    def set_lang(self, uid, lang):
+        if str(uid) not in self.data["users"]: self.data["users"][str(uid)] = {}
+        self.data["users"][str(uid)]["lang"] = lang
+        self.save()
+
+import telebot
+import time
+import random
+import threading
+from telebot import types
+from config import *
+from database import BotDB
+
+bot = telebot.TeleBot(API_TOKEN)
+db = BotDB()
+active_tasks = {}
+
+def gen_inline(btns_dict, row_width=2):
+    markup = types.InlineKeyboardMarkup(row_width=row_width)
+    buttons = [types.InlineKeyboardButton(text=k, callback_data=v) for k, v in btns_dict.items()]
+    markup.add(*buttons)
+    return markup
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    uid = message.from_user.id
+    if db.data["locked"] and uid != ADMIN_ID:
+        return bot.send_message(message.chat.id, STRINGS['ar']['locked'] if 'ar' in message.from_user.language_code else STRINGS['en']['locked'])
+    
+    btns = {"العربية 🇸🇦": "set_ar", "English 🇺🇸": "set_en"}
+    bot.send_message(message.chat.id, STRINGS['en']['welcome'], reply_markup=gen_inline(btns), parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    uid = call.from_user.id
+    cid = call.message.chat.id
+
+    # 1. تغيير اللغة
+    if call.data.startswith("set_"):
+        lang = call.data.split("_")[1]
+        db.set_lang(uid, lang)
+        show_main(cid, uid)
+
+    # 2. العودة للقائمة الرئيسية
+    elif call.data == "main":
+        show_main(cid, uid)
+
+    # 3. بدء عملية البلاغ
+    elif call.data == "pre_rpt":
+        lang = db.get_lang(uid)
+        msg = bot.send_message(cid, STRINGS[lang]['target_prompt'])
+        bot.register_next_step_handler(msg, process_target, lang)
+
+    # 4. لوحة الإدارة
+    elif call.data == "adm_panel":
+        if uid != ADMIN_ID: return
+        lang = db.get_lang(uid)
+        status = "LOCKED" if db.data["locked"] else "OPEN"
+        btns = {"Toggle Lock": "t_lock", STRINGS[lang]['back']: "main"}
+        bot.edit_message_text(f"🛠 Admin Panel\nStatus: {status}\nUsers: {len(db.data['users'])}", cid, call.message.message_id, reply_markup=gen_inline(btns))
+
+    elif call.data == "t_lock":
+        db.data["locked"] = not db.data["locked"]
+        db.save()
+        callback_handler(call) # Refresh
+
+    elif call.data == "stop_loop":
+        active_tasks[cid] = False
+        bot.answer_callback_query(call.id, "Stopped ✅")
+
+def show_main(cid, uid):
+    lang = db.get_lang(uid)
+    btns = {
+        STRINGS[lang]['add_session']: "add_s",
+        STRINGS[lang]['start_report']: "pre_rpt",
+        STRINGS[lang]['dev_btn']: "dev_url",
+        STRINGS[lang]['admin_btn'] if uid == ADMIN_ID else "---": "adm_panel"
+    }
+    # ملاحظة: زر المطور يحتاج رابط URL
+    markup = gen_inline(btns)
+    # تعديل زر المطور ليكون رابطاً حقيقياً
+    for row in markup.keyboard:
+        for btn in row:
+            if btn.callback_data == "dev_url":
+                btn.callback_data = None
+                btn.url = DEV_LINK
+                
+    bot.send_message(cid, STRINGS[lang]['main_menu'], reply_markup=markup)
+
+def process_target(message, lang):
+    target = message.text
+    btns = {"Account": f"tp_acc_{target}", "Post": f"tp_pst_{target}", "Story": f"tp_sty_{target}"}
+    bot.send_message(message.chat.id, STRINGS[lang]['type_prompt'], reply_markup=gen_inline(btns))
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("tp_"))
+def select_reason(call):
+    lang = db.get_lang(call.from_user.id)
+    btns = {r: "start_engine" for r in REASONS}
+    bot.edit_message_text(STRINGS[lang]['reason_prompt'], call.message.chat.id, call.message.message_id, reply_markup=gen_inline(btns))
+
+@bot.callback_query_handler(func=lambda call: call.data == "start_engine")
+def start_engine(call):
+    cid = call.message.chat.id
+    lang = db.get_lang(call.from_user.id)
+    active_tasks[cid] = True
+    threading.Thread(target=reporting_loop, args=(cid, lang)).start()
+
+def reporting_loop(cid, lang):
+    sent, fail = 0, 0
+    stop_btn = {STRINGS[lang]['stop_btn']: "stop_loop"}
+    while active_tasks.get(cid):
+        time.sleep(random.uniform(3.5, 5.9))
+        sent += 1
+        caption = STRINGS[lang]['stats'].format(sent, fail)
+        try:
+            bot.send_video(cid, VIDEO_LINK, caption=caption, reply_markup=gen_inline(stop_btn), parse_mode="Markdown")
+        except: break
+        if not active_tasks.get(cid): break
+
+bot.infinity_polling()
