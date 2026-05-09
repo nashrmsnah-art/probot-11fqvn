@@ -8,86 +8,90 @@ from database import BotDB
 
 bot = telebot.TeleBot(API_TOKEN)
 db = BotDB()
-active_tasks = {}
+active_loops = {}
 
-def gen_inline(btns_dict, row_width=2):
-    markup = types.InlineKeyboardMarkup(row_width=row_width)
-    buttons = [types.InlineKeyboardButton(text=k, callback_data=v) for k, v in btns_dict.items()]
-    markup.add(*buttons)
+def make_kb(btns, row=2):
+    markup = types.InlineKeyboardMarkup(row_width=row)
+    markup.add(*[types.InlineKeyboardButton(text=k, callback_data=v) for k, v in btns.items()])
     return markup
 
 @bot.message_handler(commands=['start'])
-def start(message):
+def welcome(message):
     uid = message.from_user.id
     if db.data["locked"] and uid != ADMIN_ID:
-        return bot.send_message(message.chat.id, STRINGS['ar']['locked'])
+        return bot.send_message(message.chat.id, STRINGS['ar']['lock_msg'])
     
-    btns = {"العربية 🇸🇦": "set_ar", "English 🇺🇸": "set_en"}
-    bot.send_message(message.chat.id, STRINGS['en']['welcome'], reply_markup=gen_inline(btns), parse_mode="Markdown")
+    kb = {"العربية 🇸🇦": "set_ar", "English 🇺🇸": "set_en"}
+    bot.send_message(message.chat.id, STRINGS['en']['start'], reply_markup=make_kb(kb), parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    uid = call.from_user.id
-    cid = call.message.chat.id
-    lang = db.get_lang(uid)
+def handle_all(call):
+    uid, cid = call.from_user.id, call.message.chat.id
+    user = db.get_user(uid)
+    lang = user["lang"]
 
     if call.data.startswith("set_"):
         new_lang = call.data.split("_")[1]
         db.set_lang(uid, new_lang)
-        show_main(cid, uid)
-    elif call.data == "main": show_main(cid, uid)
-    elif call.data == "pre_rpt":
-        msg = bot.send_message(cid, STRINGS[lang]['target_prompt'])
-        bot.register_next_step_handler(msg, process_target, lang)
-    elif call.data == "adm_panel" and uid == ADMIN_ID:
+        render_main(cid, uid, new_lang)
+
+    elif call.data == "main_menu":
+        render_main(cid, uid, lang)
+
+    elif call.data == "start_op":
+        msg = bot.send_message(cid, STRINGS[lang]['target_msg'])
+        bot.register_next_step_handler(msg, choose_type, lang)
+
+    elif call.data == "admin":
+        if uid != ADMIN_ID: return
         status = "🔒 LOCKED" if db.data["locked"] else "🔓 OPEN"
-        txt = f"🛠 **Admin Panel**\nStatus: {status}\nUsers: {len(db.data['users'])}"
-        btns = {"Change Status": "t_lock", STRINGS[lang]['back']: "main"}
-        bot.edit_message_text(txt, cid, call.message.message_id, reply_markup=gen_inline(btns))
-    elif call.data == "t_lock":
-        db.data["locked"] = not db.data["locked"]
-        db.save()
-        callback_handler(call)
-    elif call.data == "stop_loop": active_tasks[cid] = False
+        txt = f"🛠 **Admin Panel**\nUsers: {len(db.data['users'])}\nTotal Ops: {db.data['total_ops']}\nBot: {status}"
+        bot.edit_message_text(txt, cid, call.message.message_id, reply_markup=make_kb({"Toggle Lock": "lock", "Back": "main_menu"}), parse_mode="Markdown")
 
-def show_main(cid, uid):
-    lang = db.get_lang(uid)
-    btns = {STRINGS[lang]['add_session']: "add_s", STRINGS[lang]['start_report']: "pre_rpt", 
-            STRINGS[lang]['dev_btn']: "dev_url", STRINGS[lang]['admin_btn'] if uid == ADMIN_ID else "---": "adm_panel"}
-    markup = gen_inline(btns)
-    for row in markup.keyboard:
-        for btn in row:
-            if btn.callback_data == "dev_url": btn.callback_data = None; btn.url = DEV_LINK
-    bot.send_message(cid, STRINGS[lang]['main_menu'], reply_markup=markup)
+    elif call.data == "lock":
+        db.data["locked"] = not db.data["locked"]; db.save()
+        handle_all(call)
 
-def process_target(message, lang):
-    target = message.text
-    btns = {"Account": f"tp_acc_{target}", "Post": f"tp_pst_{target}", "Story": f"tp_sty_{target}"}
-    bot.send_message(message.chat.id, STRINGS[lang]['type_prompt'], reply_markup=gen_inline(btns))
+    elif call.data == "stop":
+        active_loops[cid] = False
+        bot.answer_callback_query(call.id, "Stopping process...")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("tp_"))
-def select_reason(call):
-    lang = db.get_lang(call.from_user.id)
-    btns = {r: "start_engine" for r in REASONS}
-    bot.edit_message_text(STRINGS[lang]['reason_prompt'], call.message.chat.id, call.message.message_id, reply_markup=gen_inline(btns))
+def render_main(cid, uid, lang):
+    btns = {STRINGS[lang]['add_session']: "add", STRINGS[lang]['start_report']: "start_op", 
+            STRINGS[lang]['dev_btn']: "dev_url", STRINGS[lang]['admin_btn'] if uid == ADMIN_ID else "---": "admin"}
+    markup = make_kb(btns)
+    for r in markup.keyboard:
+        for b in r:
+            if b.callback_data == "dev_url": b.callback_data = None; b.url = DEV_LINK
+    bot.send_message(cid, STRINGS[lang]['main'], reply_markup=markup, parse_mode="Markdown")
 
-@bot.callback_query_handler(func=lambda call: call.data == "start_engine")
-def start_engine(call):
+def choose_type(message, lang):
+    t = message.text
+    btns = {"Account": f"t_acc_{t}", "Post": f"t_pst_{t}", "Story": f"t_sty_{t}"}
+    bot.send_message(message.chat.id, STRINGS[lang]['type_msg'], reply_markup=make_kb(btns))
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("t_"))
+def choose_reason(call):
+    lang = db.get_user(call.from_user.id)["lang"]
+    btns = {r: "run_engine" for r in REASONS}
+    bot.edit_message_text(STRINGS[lang]['reason_msg'], call.message.chat.id, call.message.message_id, reply_markup=make_kb(btns))
+
+@bot.callback_query_handler(func=lambda call: call.data == "run_engine")
+def engine_start(call):
     cid = call.message.chat.id
-    lang = db.get_lang(call.from_user.id)
-    active_tasks[cid] = True
-    threading.Thread(target=reporting_loop, args=(cid, lang)).start()
+    lang = db.get_user(call.from_user.id)["lang"]
+    active_loops[cid] = True
+    threading.Thread(target=report_loop, args=(cid, lang)).start()
 
-def reporting_loop(cid, lang):
-    sent, fail = 0, 0
-    while active_tasks.get(cid):
-        time.sleep(random.uniform(3.5, 5.8))
-        sent += 1
-        db.data["total_reports"] += 1; db.save()
-        markup = gen_inline({STRINGS[lang]['stop_btn']: "stop_loop"})
-        try:
-            bot.send_video(cid, VIDEO_LINK, caption=STRINGS[lang]['stats'].format(sent, fail), reply_markup=markup, parse_mode="Markdown")
+def report_loop(cid, lang):
+    ok, no = 0, 0
+    kb = make_kb({STRINGS[lang]['stop_btn']: "stop"})
+    while active_loops.get(cid):
+        time.sleep(random.uniform(3.5, 5.5)) # حماية ضد الحظر
+        ok += 1; db.data["total_ops"] += 1; db.save()
+        caption = STRINGS[lang]['stats'].format(ok, no)
+        try: bot.send_video(cid, VIDEO_URL, caption=caption, reply_markup=kb, parse_mode="Markdown")
         except: break
-    bot.send_message(cid, "✅ Operation Finished.")
+    bot.send_message(cid, "🏁 Process Terminated.")
 
 bot.infinity_polling()
